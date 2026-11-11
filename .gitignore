@@ -1,0 +1,12 @@
+# DSH profile backups created by install.mjs
+.backup/
+
+# Host load heartbeat written by index.js at runtime
+.host-loaded.log
+
+# runtime logs
+*.log
+
+# deps / OS
+node_modules/
+.DS_Store

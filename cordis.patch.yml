@@ -1,0 +1,6 @@
+# 由 install.mjs 插入到 profile 的 cordis.patch.yml（也可以由 plugin_manager install_bundle 代劳）。
+# 一行 Host 条目即可：Client 半侧的 bundle 靠这条启用记录被扫描到并下发。
+- insert:
+    - id: gloss
+      name: '@local/gloss'
+      config: {}

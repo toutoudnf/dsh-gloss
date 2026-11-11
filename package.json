@@ -1,0 +1,55 @@
+{
+  "name": "@local/gloss",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH client plugin: gloss long answers by selection, collect notes in the composer draft, and send them all at once.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "test": "node test-pure.mjs",
+    "test:smoke": "node test-smoke.mjs",
+    "check": "node --check client.js && node --check index.js && node --check install.mjs && node --check uninstall.mjs && node --check test-pure.mjs && node --check test-smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toutoudnf/dsh-gloss.git"
+  },
+  "homepage": "https://github.com/toutoudnf/dsh-gloss#readme",
+  "bugs": {
+    "url": "https://github.com/toutoudnf/dsh-gloss/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "annotation",
+    "gloss",
+    "composer",
+    "reading"
+  ]
+}
