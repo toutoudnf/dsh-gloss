@@ -1,6 +1,6 @@
 {
   "name": "@local/gloss",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "DSH client plugin: gloss long answers and right-sidebar file previews by selection, collect notes in the composer draft, and send them all at once.",
   "type": "module",

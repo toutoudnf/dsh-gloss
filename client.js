@@ -46,6 +46,17 @@ window.__ModuleLoader__.load({
       return cut >= 0 ? value.slice(cut + 1) : value
     }
 
+    /** 中间省略：超长文件名保留头尾，浮层/托盘里更好辨认。 */
+    function ellipsizeMiddle(text, max) {
+      const value = String(text == null ? '' : text)
+      const limit = Number.isFinite(max) ? max : 24
+      const chars = Array.from(value)
+      if (chars.length <= limit) return value
+      const head = Math.max(1, Math.ceil((limit - 1) / 2))
+      const tail = Math.max(1, limit - 1 - head)
+      return chars.slice(0, head).join('') + '…' + chars.slice(chars.length - tail).join('')
+    }
+
     /** 绝对路径 → 相对工作区路径（cwd 未知、或路径不在工作区下时原样返回）。 */
     function toWorkspacePath(absolutePath, cwd) {
       const path = String(absolutePath == null ? '' : absolutePath)
@@ -672,7 +683,7 @@ window.__ModuleLoader__.load({
           editor.turn != null
             ? '第' + editor.turn + '轮'
             : editor.file && (editor.file.label || editor.file.path)
-              ? editor.file.label || basenameOf(editor.file.path)
+              ? ellipsizeMiddle(editor.file.label || basenameOf(editor.file.path), 24)
               : ''
         const width = 360
         const height = 300
@@ -1041,7 +1052,7 @@ window.__ModuleLoader__.load({
       /** 文件批注的文件名（悬停显示完整路径）。 */
       function noteFileLabel(note) {
         if (!note.file) return ''
-        return note.file.label || basenameOf(note.file.path) || '文件预览'
+        return ellipsizeMiddle(note.file.label || basenameOf(note.file.path) || '文件预览', 24)
       }
 
       /**
@@ -1301,11 +1312,13 @@ window.__ModuleLoader__.load({
       '.rnx-pop-quote{display:flex;gap:6px;max-height:52px;overflow:hidden;color:var(--dsw-alias-label-secondary, #475467);line-height:1.5;}',
       '.rnx-pop-quote-label{flex:none;color:var(--dsw-alias-label-tertiary, #667085);}',
       '.rnx-pop-quote-text{overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}',
-      '.rnx-pop-types{display:flex;align-items:center;gap:6px;}',
-      '.rnx-type{height:24px;padding:0 10px;border:1px solid var(--dsw-alias-border-l1, #d0d5dd);border-radius:999px;',
-      'background:transparent;color:var(--dsw-alias-label-secondary, #475467);font-size:12px;cursor:pointer;font-family:inherit;}',
+      '.rnx-pop-types{display:flex;align-items:center;gap:6px;min-width:0;}',
+      '.rnx-type{flex:none;white-space:nowrap;height:24px;padding:0 10px;border:1px solid var(--dsw-alias-border-l1, #d0d5dd);',
+      'border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary, #475467);font-size:12px;',
+      'cursor:pointer;font-family:inherit;}',
       '.rnx-type-on{background:var(--dsw-alias-state-business-primary, #444ce7);border-color:transparent;color:#fff;}',
-      '.rnx-pop-loc{margin-left:auto;color:var(--dsw-alias-label-tertiary, #667085);}',
+      '.rnx-pop-loc{margin-left:auto;min-width:0;max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+      'color:var(--dsw-alias-label-tertiary, #667085);}',
       '.rnx-pop-input{width:100%;box-sizing:border-box;resize:vertical;min-height:84px;max-height:220px;padding:8px;',
       'border:1px solid var(--dsw-alias-border-l1, #d0d5dd);border-radius:8px;background:var(--dsw-alias-bg-base, #fff);',
       'color:var(--dsw-alias-label-primary, #101828);font-size:13px;line-height:1.6;font-family:inherit;}',

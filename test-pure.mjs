@@ -21,7 +21,7 @@ const body = source.slice(start, end)
 const api = new Function(
   body +
     '\nreturn { BEGIN, END, MAX_QUOTE, MAX_NOTES, MAX_HEADING, TYPE_LABEL, truncate, basenameOf, toWorkspacePath,' +
-    ' normalizeHeading, normalizeQuote, normalizeNote, locationLabelOf, formatBlock, parseBlock, mergeBlock,' +
+    ' normalizeHeading, ellipsizeMiddle, normalizeQuote, normalizeNote, locationLabelOf, formatBlock, parseBlock, mergeBlock,' +
     ' mergeNotes, sortNotes, blockSignature, stripRuntimeNote, cutBlock };',
 )()
 
@@ -321,6 +321,17 @@ test('toWorkspacePath：工作区内转相对路径，区外原样返回', () =>
   assert.equal(api.toWorkspacePath('/other/a.md', '/ws'), '/other/a.md')
   assert.equal(api.toWorkspacePath('/ws2/a.md', '/ws'), '/ws2/a.md')
   assert.equal(api.toWorkspacePath('', '/ws'), '')
+})
+
+test('ellipsizeMiddle：短名不变，长名保留头尾', () => {
+  assert.equal(api.ellipsizeMiddle('a.md', 24), 'a.md')
+  const long = '2026-11-02-Super-agent设计探索-迈向更自主的Agent系统.md'
+  const short = api.ellipsizeMiddle(long, 24)
+  assert.ok(Array.from(short).length <= 24)
+  assert.ok(short.startsWith('2026-11'))
+  assert.ok(short.endsWith('.md'))
+  assert.ok(short.includes('…'))
+  assert.equal(api.ellipsizeMiddle(null, 24), '')
 })
 
 test('basenameOf / normalizeHeading', () => {
