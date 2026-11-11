@@ -17,6 +17,7 @@ DSH 的浏览器插件由「已启用的 Loader 条目」扫描 `package.json` �
 |---|---|---|
 | `shell.overlay` | root | 监听选区、渲染「＋ 批注」浮标与批注输入浮层（视口级 fixed 定位） |
 | `conversation.composer.dock` | session | 批注托盘；持有 `inputActions` / `useInput`，负责把批注写进草稿 |
+| `sidebar.right.tab.document.actions` | session | 只在文件预览头部渲染一个隐藏标记（`data-gloss-file-path`），把 Host 绝对路径暴露给选区逻辑；不显示 UI |
 | `conversation.chat.turnTail`（roadmap） | session | 每轮尾部的「批注 N」角标 |
 
 为什么浮标不放在 composer 的 dock 里：dock 在输入卡片内部，可能有 overflow/clip；`shell.overlay`
@@ -32,8 +33,15 @@ DSH 的浏览器插件由「已启用的 Loader 条目」扫描 `package.json` �
    类型：问题
    引用：原文……
    批注：我的问题
+2) 位置：文件 调研/2026-10-15-xxx.md
+   章节：已知限制
+   类型：问题
+   引用：文件里的原文……
+   批注：对这段文件内容的想法
 ====== 批注结束 ======
 ```
+
+- `位置` 有两种形态：`第N轮回答`（聊天）与 `文件 <相对路径>`（文件预览）；`章节` 是文件批注的可选字段。
 
 - 块外是用户自己打的字，插件只替换块内。
 - `引用` 空白折叠 + 单行化 + 800 字截断；`批注` 上限 4000 字；整批 20 条。
@@ -64,6 +72,11 @@ localStorage 只存**误删恢复备份**（`dsh.gloss.backup.v1.<sessionId>`）
 轮次号取自最近的 `[data-chat-turn]`，类型取自 `[data-chat-flow-kind]`；取不到就降级为
 「只按引用原文定位」，不阻塞批注保存。
 
+**文件预览分支**：选区起点（其次终点、公共祖先）落在 `[data-textpreview-body]` / `[data-document-markdown]`
+内时判定为文件批注，优先于聊天 flow。路径来自预览头部 `sidebar.right.tab.document.actions` 槽位里的
+隐藏标记（owner prop `absolutePath`），会话来自右栏根的 `data-sidebar-right-session`，再用会话 cwd
+换成工作区相对路径；章节取选区起点之前最近的 h1~h6。任何一项取不到都只降级。
+
 ## 5. 写入草稿的守卫
 
 `setDraft()` 是**整段纯文本重写**，因此只在安全时机调用：
@@ -91,18 +104,21 @@ overlay 是 root 作用域，拿不到 `inputActions`，所以它只把批注写
 | `inputActions` 标准 prop | 无法写入草稿 | 托盘提供「复制批注块」手动粘贴 |
 | `[data-chat-turn]` | 轮次号/跳转不可用 | 只按引用原文定位 |
 | `shell.overlay` | 浮标无处挂 | 可改挂 `conversation.input.overlay` |
+| `[data-textpreview-body]` / `[data-document-markdown]` | 认不出文件预览选区 | 文件批注不出现，聊天批注不受影响 |
+| `sidebar.right.tab.document.actions` | 文件路径拿不到 | 位置降级为「文件（路径未知）」，批注仍可保存 |
 | 多窗口同会话 | 后写覆盖前写 | 不支持，文档明示 |
 | 发送/清空时序 | 可能残留「恢复上次批注」提示 | 用户点「忽略」 |
 
 ## 8. Roadmap
 
 - P1：每轮「批注 N」角标、跳转临时高亮、CSS Custom Highlight 持久高亮、快捷键、类型标签。
+- P1.5：文件批注的源码行号（需要接管 Markdown 渲染器或在 Host 侧比对原文，代价较高，暂不做）。
 - P2：右侧栏批注清单面板、导出 Markdown/JSON、跨会话汇总。
 - P3：把块解析与选区锚定抽成可复用模块，或向上游提通用能力建议。
 
 ## 9. 证据基线
 
-实现时对照的 DSH 客户端包（0.2.1-rc.5）：
+实现时对照的 DSH 客户端包（聊天批注 0.2.1-rc.5；文件批注 0.2.2-rc.1）：
 
 - `@deepseek-ai/dsh-client-ui-conversation/lib/client.js`：`inputActions` 实现、`uiSession.provide` 标准 prop、
   输入快照（`draft` / `phase` / `occurrences`）、`conversation.composer.dock` 声明。
@@ -110,3 +126,7 @@ overlay 是 root 作用域，拿不到 `inputActions`，所以它只把批注写
   `conversation.chat.turnTail` 渲染、`shell.overlay` 注册示例。
 - `@deepseek-ai/dsh-client-ui-layout/README.zh.md`：`shell.overlay` 覆盖整个框架。
 - `@deepseek-ai/dsh-experimental-client-ui-voice-input/lib/client.js`：真实插件使用 `inputActions.insertText` 的范例。
+- `@deepseek-ai/dsh-client-ui-sidebar-documentpreview/lib/client.js`：`data-textpreview-body` /
+  `data-document-markdown` 正文容器、`sidebar.right.tab.document.actions` 的 owner prop `absolutePath`。
+- `@deepseek-ai/dsh-client-ui-sidebar-right/lib/client.js`：`data-sidebar-right-session` / `data-sidebar-right-tab`。
+- `@deepseek-ai/dsh-client-ui-open-in-app/lib/client.js`：插件消费 `sidebar.right.tab.document.actions` 的官方范例。

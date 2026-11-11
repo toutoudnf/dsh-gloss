@@ -27,6 +27,7 @@ window.__ModuleLoader__.load({
     const MAX_QUOTE = 800
     const MAX_NOTE = 4000
     const MAX_NOTES = 20
+    const MAX_HEADING = 60
     const BACKUP_PREFIX = 'dsh.gloss.backup.v1.'
     const AUTO_KEY = 'dsh.gloss.auto-sync.v1'
     const TYPE_LABEL = { question: '问题', idea: '想法', mark: '标记' }
@@ -36,6 +37,28 @@ window.__ModuleLoader__.load({
       const chars = Array.from(String(text == null ? '' : text))
       if (chars.length <= max) return chars.join('')
       return chars.slice(0, max).join('') + '…（已截断）'
+    }
+
+    /** 路径末段（用于托盘/浮层显示）。 */
+    function basenameOf(path) {
+      const value = String(path == null ? '' : path).replace(/\/+$/, '')
+      const cut = value.lastIndexOf('/')
+      return cut >= 0 ? value.slice(cut + 1) : value
+    }
+
+    /** 绝对路径 → 相对工作区路径（cwd 未知、或路径不在工作区下时原样返回）。 */
+    function toWorkspacePath(absolutePath, cwd) {
+      const path = String(absolutePath == null ? '' : absolutePath)
+      const root = String(cwd == null ? '' : cwd).replace(/\/+$/, '')
+      if (path === '') return ''
+      if (root !== '' && path === root) return '.'
+      if (root !== '' && path.startsWith(root + '/')) return path.slice(root.length + 1)
+      return path
+    }
+
+    /** 章节标题：空白折叠 + 截断。 */
+    function normalizeHeading(text) {
+      return truncate(String(text == null ? '' : text).replace(/\s+/g, ' ').trim(), MAX_HEADING)
     }
 
     /** 引用：空白折叠成单行 + 截断。 */
@@ -66,11 +89,32 @@ window.__ModuleLoader__.load({
       return 'question'
     }
 
+    /**
+     * 解析「位置」字段。两种形态：
+     *   - 聊天：`第2轮回答` / `第2轮提问`
+     *   - 文件：`文件 调研/xxx.md`（有 cwd 时是相对工作区路径，否则是绝对路径）
+     */
     function parseLocation(text) {
       const value = String(text == null ? '' : text).trim()
-      const match = /^第(\d+)轮(.*)$/.exec(value)
-      if (match) return { turn: Number(match[1]), kindLabel: match[2].trim() || '回答' }
-      return { turn: null, kindLabel: value || '未知轮次' }
+      const turnMatch = /^第(\d+)轮(.*)$/.exec(value)
+      if (turnMatch) {
+        return { turn: Number(turnMatch[1]), kindLabel: turnMatch[2].trim() || '回答', file: null }
+      }
+      const fileMatch = /^文件\s+(.+)$/.exec(value)
+      if (fileMatch) {
+        const filePath = fileMatch[1].trim()
+        return { turn: null, kindLabel: '', file: filePath === '' ? null : { path: filePath, label: basenameOf(filePath) } }
+      }
+      return { turn: null, kindLabel: value || '未知轮次', file: null }
+    }
+
+    /** 批注「位置」文案：聊天轮次，或文件路径（路径未知时退化为「文件（路径未知）」）。 */
+    function locationLabelOf(note) {
+      const file = note && note.file
+      if (file && file.path) return '文件 ' + file.path
+      if (file) return '文件（路径未知）'
+      if (note && note.turn != null) return '第' + note.turn + '轮' + (note.kindLabel || '回答')
+      return '未知轮次'
     }
 
     /** 追加一行字段；多行内容用「   |」续行，避免和字段名冲突。 */
@@ -88,8 +132,8 @@ window.__ModuleLoader__.load({
       if (sorted.length === 0) return ''
       const lines = [BEGIN]
       sorted.forEach((note, index) => {
-        const turnLabel = note.turn == null ? '未知轮次' : '第' + note.turn + '轮' + (note.kindLabel || '回答')
-        lines.push(String(index + 1) + ') 位置：' + turnLabel)
+        lines.push(String(index + 1) + ') 位置：' + locationLabelOf(note))
+        if (note.heading) lines.push('   章节：' + note.heading)
         lines.push('   类型：' + (TYPE_LABEL[note.type] || TYPE_LABEL.question))
         pushField(lines, '引用', note.quote ? note.quote : '（未取到原文）')
         pushField(lines, '批注', note.note ? note.note : '（仅标记，暂未填写想法）')
@@ -134,6 +178,8 @@ window.__ModuleLoader__.load({
           current = {
             turn: location.turn,
             kindLabel: location.kindLabel,
+            file: location.file,
+            heading: '',
             type: 'question',
             quote: '',
             note: '',
@@ -142,7 +188,7 @@ window.__ModuleLoader__.load({
           lastField = null
           continue
         }
-        const field = /^(类型|引用|批注)：(.*)$/.exec(line)
+        const field = /^(类型|引用|批注|章节)：(.*)$/.exec(line)
         if (field && current !== null) {
           if (field[1] === '类型') {
             current.type = typeFromLabel(field[2])
@@ -150,6 +196,9 @@ window.__ModuleLoader__.load({
           } else if (field[1] === '引用') {
             current.quote = field[2]
             lastField = 'quote'
+          } else if (field[1] === '章节') {
+            current.heading = field[2].trim()
+            lastField = null
           } else {
             current.note = field[2]
             lastField = 'note'
@@ -214,7 +263,11 @@ window.__ModuleLoader__.load({
     /** 备份用签名：只在批注内容变化时写 localStorage。 */
     function blockSignature(notes) {
       return (notes || [])
-        .map((note) => [note.turn, note.type, note.quote, note.note].join('\u0001'))
+        .map((note) =>
+          [note.turn, note.type, note.quote, note.note, note.heading || '', note.file ? note.file.path || '' : ''].join(
+            '\u0001',
+          ),
+        )
         .join('\u0002')
     }
 
@@ -228,6 +281,8 @@ window.__ModuleLoader__.load({
         note: note.note || '',
         type: note.type || 'question',
         createdAt: note.createdAt || 0,
+        heading: note.heading || '',
+        file: note.file ? { path: note.file.path || '', label: note.file.label || '' } : null,
       }
     }
     // ===== /纯函数区 =====
@@ -333,19 +388,88 @@ window.__ModuleLoader__.load({
       return flow ? element : null
     }
 
+    /** 右栏文档预览的正文容器（md / 代码 / 纯文本，都由 documentpreview 渲染）。 */
+    function fileBodyOf(node) {
+      const element = elementOfNode(node)
+      if (!element || typeof element.closest !== 'function') return null
+      if (element.closest('input, textarea, [contenteditable="true"], [data-rnx-ui]')) return null
+      return element.closest('[data-textpreview-body]') || element.closest('[data-document-markdown]') || null
+    }
+
     /**
-     * 选区锚点元素：优先用选区**起点**，其次终点，最后公共祖先。
+     * 选区锚点：优先用选区**起点**判断落在聊天区还是文件预览，其次终点、最后公共祖先。
      *
      * 为什么起点优先：用户从消息末尾往下拖到消息外（动作行/下一条）时，公共祖先会落到
      * flow 容器上——它没有 data-chat-turn，轮次号就丢了（实测会显示「未知轮次」）；
      * 而起点仍在消息内，能正确拿到所在轮。
      */
-    function selectionElement(range) {
-      return (
-        flowElementOf(range.startContainer) ||
-        flowElementOf(range.endContainer) ||
-        flowElementOf(range.commonAncestorContainer)
-      )
+    function selectionTargetOf(range) {
+      const nodes = [range.startContainer, range.endContainer, range.commonAncestorContainer]
+      for (const node of nodes) {
+        const body = fileBodyOf(node)
+        if (body) return { target: 'file', body, element: elementOfNode(node) || body }
+      }
+      for (const node of nodes) {
+        const element = flowElementOf(node)
+        if (element) return { target: 'chat', body: null, element }
+      }
+      return null
+    }
+
+    /**
+     * 文件预览里的选区锚点：
+     *   - 绝对路径来自 DSH 文档预览交给插件的 `sidebar.right.tab.document.actions`
+     *     （owner prop 是 absolutePath；预览头部那个槽位里有一个隐藏标记）；
+     *   - 会话来自右栏根上的 `data-sidebar-right-session`，再用会话 cwd 把绝对路径换成
+     *     工作区相对路径；
+     *   - 章节取正文里选区起点之前最近的 h1~h6，方便人和模型定位。
+     * 任何一项取不到都只降级，不阻塞批注保存。
+     */
+    function fileAnchorOf(body, range, getCwd) {
+      const tabBody =
+        body.closest('[data-sidebar-right-tab]') || body.closest('[data-slot="sidebar.right.pane.tab"]')
+      const scope = body.closest('[data-sidebar-right-session]')
+      const sessionId =
+        scope && scope.dataset && typeof scope.dataset.sidebarRightSession === 'string'
+          ? scope.dataset.sidebarRightSession
+          : null
+      const mark = (tabBody || body).querySelector('[data-gloss-file-path]')
+      const absolutePath =
+        mark && mark.dataset && typeof mark.dataset.glossFilePath === 'string' ? mark.dataset.glossFilePath : ''
+      const cwd = typeof getCwd === 'function' ? getCwd(sessionId) : ''
+      const path = toWorkspacePath(absolutePath, cwd)
+      return {
+        sessionId,
+        absolutePath,
+        path,
+        label: basenameOf(path) || '文件预览',
+        heading: nearestHeadingOf(body, range),
+      }
+    }
+
+    /** 正文里选区起点之前最近的一个标题文本（取不到返回 ''）。 */
+    function nearestHeadingOf(body, range) {
+      if (!body || !range || typeof body.querySelectorAll !== 'function') return ''
+      let start = null
+      try {
+        start = range.cloneRange()
+        start.collapse(true)
+      } catch (error) {
+        start = null
+      }
+      if (!start) return ''
+      let nearest = null
+      for (const heading of body.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
+        let before = false
+        try {
+          before = start.comparePoint(heading, 0) < 0
+        } catch (error) {
+          before = false
+        }
+        if (before) nearest = heading
+      }
+      if (!nearest) return ''
+      return normalizeHeading(nearest.textContent || '')
     }
 
     /** 计算选中文字在所属轮次内的字符偏移（失败返回 null）。 */
@@ -363,7 +487,8 @@ window.__ModuleLoader__.load({
     }
 
     // ===== 选区浮标 + 批注输入浮层（root 覆盖层）=====
-    function GlossOverlay() {
+    function GlossOverlay(props) {
+      const getCwd = props && typeof props.getCwd === 'function' ? props.getCwd : null
       const [selection, setSelection] = React.useState(null)
       const [editor, setEditor] = React.useState(null)
       const [type, setType] = React.useState('question')
@@ -403,8 +528,8 @@ window.__ModuleLoader__.load({
             return
           }
           const range = browserSelection.getRangeAt(0)
-          const element = selectionElement(range)
-          if (!element) {
+          const target = selectionTargetOf(range)
+          if (!target) {
             clear()
             return
           }
@@ -418,14 +543,18 @@ window.__ModuleLoader__.load({
             clear()
             return
           }
+          const isFile = target.target === 'file'
           const snapshot = {
             text: quote,
             rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
-            kind: element.closest('[data-chat-flow-kind]')
-              ? element.closest('[data-chat-flow-kind]').dataset.chatFlowKind
-              : null,
-            ...anchorOf(element),
-            offset: offsetWithin(range, element),
+            target: target.target,
+            kind:
+              !isFile && target.element.closest('[data-chat-flow-kind]')
+                ? target.element.closest('[data-chat-flow-kind]').dataset.chatFlowKind
+                : null,
+            ...(isFile ? { turn: null, kindLabel: '', offset: null } : anchorOf(target.element)),
+            offset: isFile ? null : offsetWithin(range, target.element),
+            file: isFile ? fileAnchorOf(target.body, range, getCwd) : null,
           }
           selectionRef.current = snapshot
           setSelection(snapshot)
@@ -501,6 +630,13 @@ window.__ModuleLoader__.load({
           setError('没有可用的引用文字')
           return
         }
+        const file =
+          snapshot.file && (snapshot.file.path || snapshot.file.label)
+            ? {
+                path: snapshot.file.path || '',
+                label: snapshot.file.label || '文件预览',
+              }
+            : null
         store.addNote(store.sessionId, {
           turn: snapshot.turn == null ? null : snapshot.turn,
           kindLabel: snapshot.kindLabel || '回答',
@@ -509,6 +645,8 @@ window.__ModuleLoader__.load({
           note: normalizeNote(text),
           type,
           createdAt: Date.now(),
+          heading: file && snapshot.file ? snapshot.file.heading || '' : '',
+          file,
         })
         setSaved('已加入批注' + (normalizeNote(text) ? '' : '（仅标记）'))
         window.clearTimeout(savedTimer.current)
@@ -530,6 +668,12 @@ window.__ModuleLoader__.load({
       }
 
       if (editor) {
+        const locationBadge =
+          editor.turn != null
+            ? '第' + editor.turn + '轮'
+            : editor.file && (editor.file.label || editor.file.path)
+              ? editor.file.label || basenameOf(editor.file.path)
+              : ''
         const width = 360
         const height = 300
         const viewportWidth = window.innerWidth
@@ -562,7 +706,13 @@ window.__ModuleLoader__.load({
                 TYPE_LABEL[key],
               ),
             ),
-            editor.turn != null ? h('span', { className: 'rnx-pop-loc' }, '第' + editor.turn + '轮') : null,
+            locationBadge
+              ? h(
+                  'span',
+                  { className: 'rnx-pop-loc', title: (editor.file && editor.file.path) || '' },
+                  locationBadge,
+                )
+              : null,
           ),
           h('textarea', {
             ref: textareaRef,
@@ -604,6 +754,18 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', className: 'rnx-btn rnx-btn-toolbar', onClick: openEditor }, '＋ 批注'),
         toast,
       )
+    }
+
+    // ===== 文件预览的路径标记（session 作用域，挂在预览头部）=====
+    /**
+     * DSH 的文档预览把 `sidebar.right.tab.document.actions` 槽位交给插件，owner prop
+     * 就是文件的 Host 绝对路径。这里只渲染一个隐藏标记，供选区时反查「这段文字属于
+     * 哪个文件」；不显示任何 UI，也不参与预览排版。
+     */
+    function GlossFileMarker(props) {
+      const path = props && typeof props.absolutePath === 'string' ? props.absolutePath : ''
+      if (!path) return null
+      return h('span', { 'data-gloss-file-path': path, style: { display: 'none' } })
     }
 
     // ===== 批注托盘（session 作用域；拥有 inputActions / useInput）=====
@@ -870,7 +1032,64 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /** 托盘/浮层里显示的位置标签。 */
+      function noteTag(note) {
+        if (note.file) return '文件'
+        return note.turn == null ? '未知轮次' : '第' + note.turn + '轮'
+      }
+
+      /** 文件批注的文件名（悬停显示完整路径）。 */
+      function noteFileLabel(note) {
+        if (!note.file) return ''
+        return note.file.label || basenameOf(note.file.path) || '文件预览'
+      }
+
+      /**
+       * 跳回文件预览里的原文：按路径找当前打开的预览 tab，再在正文里按引用文字找
+       * 第一个匹配的文本节点；找不到就只提示，不影响批注。
+       */
+      function jumpFile(note) {
+        const path = note.file.path || ''
+        const marks = [...document.querySelectorAll('[data-gloss-file-path]')]
+        const mark = marks.find((candidate) => {
+          if (candidate.closest('[hidden], [aria-hidden="true"]')) return false
+          if (typeof candidate.checkVisibility === 'function' && !candidate.checkVisibility()) return false
+          const value = candidate.dataset.glossFilePath || ''
+          if (!value) return false
+          if (path === '') return true
+          return value === path || value.endsWith('/' + path)
+        })
+        if (!mark) {
+          flash('这个文件预览已经关闭，重新打开后再跳转')
+          return
+        }
+        const tabBody =
+          mark.closest('[data-sidebar-right-tab]') || mark.closest('[data-slot="sidebar.right.pane.tab"]') || document.body
+        const scope = tabBody.querySelector('[data-textpreview-body]') || tabBody
+        const needle = String(note.quote || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+        const target = (needle && findTextElement(scope, needle)) || scope
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        target.classList.add('rnx-flash')
+        window.setTimeout(() => target.classList.remove('rnx-flash'), 1400)
+      }
+
+      /** 在容器里按「空白折叠后的文本」找第一个包含 needle 的文本节点所在的元素。 */
+      function findTextElement(container, needle) {
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+        let node = walker.nextNode()
+        while (node) {
+          const text = String(node.nodeValue || '').replace(/\s+/g, ' ')
+          if (text.includes(needle)) return node.parentElement
+          node = walker.nextNode()
+        }
+        return null
+      }
+
       function jump(note) {
+        if (note.file) {
+          jumpFile(note)
+          return
+        }
         if (note.turn == null) {
           flash('这条批注没有轮次信息，无法跳转')
           return
@@ -973,7 +1192,14 @@ window.__ModuleLoader__.load({
                   h(
                     'div',
                     { className: 'rnx-item-head' },
-                    h('span', { className: 'rnx-tag' }, note.turn == null ? '未知轮次' : '第' + note.turn + '轮'),
+                    h('span', { className: 'rnx-tag' }, noteTag(note)),
+                    note.file
+                      ? h(
+                          'span',
+                          { className: 'rnx-tag rnx-tag-file', title: note.file.path || '' },
+                          noteFileLabel(note),
+                        )
+                      : null,
                     h('span', { className: 'rnx-tag rnx-tag-type' }, TYPE_LABEL[note.type] || TYPE_LABEL.question),
                     h('span', { className: 'rnx-spacer' }),
                     h('button', { type: 'button', className: 'rnx-icon', title: '跳转到原文', onClick: () => jump(note) }, '↗'),
@@ -1034,7 +1260,14 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { className: 'rnx-item-head' },
-                      h('span', { className: 'rnx-tag' }, note.turn == null ? '未知轮次' : '第' + note.turn + '轮'),
+                      h('span', { className: 'rnx-tag' }, noteTag(note)),
+                      note.file
+                        ? h(
+                            'span',
+                            { className: 'rnx-tag rnx-tag-file', title: note.file.path || '' },
+                            noteFileLabel(note),
+                          )
+                        : null,
                       h('span', { className: 'rnx-tag rnx-tag-type' }, '待同步'),
                     ),
                     h('div', { className: 'rnx-quote' }, '「' + (note.quote || '') + '」'),
@@ -1106,6 +1339,8 @@ window.__ModuleLoader__.load({
       '.rnx-item-head{display:flex;align-items:center;gap:8px;}',
       '.rnx-tag{color:var(--dsw-alias-label-tertiary, #667085);}',
       '.rnx-tag-type{color:var(--dsw-alias-state-business-primary, #444ce7);}',
+      '.rnx-tag-file{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+      'color:var(--dsw-alias-label-secondary, #475467);}',
       '.rnx-spacer{flex:1;}',
       '.rnx-icon{width:22px;height:22px;border:none;border-radius:4px;background:transparent;cursor:pointer;',
       'color:var(--dsw-alias-label-tertiary, #667085);font-size:13px;line-height:1;font-family:inherit;}',
@@ -1131,8 +1366,21 @@ window.__ModuleLoader__.load({
     ].join('\n')
 
     return {
-      inject: ['slots'],
+      inject: ['sessions', 'slots'],
       apply(ctx) {
+        /** 会话的工作区路径（把文件预览的绝对路径换成相对路径）；取不到返回 ''。 */
+        const getCwd = (sessionId) => {
+          try {
+            const row =
+              sessionId && ctx.sessions && ctx.sessions.list
+                ? ctx.sessions.list.getSnapshot().byId[sessionId]
+                : null
+            return row && typeof row.cwd === 'string' ? row.cwd : ''
+          } catch (error) {
+            return ''
+          }
+        }
+
         ctx.effect(() => {
           const style = document.createElement('style')
           style.dataset.plugin = '@local/gloss'
@@ -1147,6 +1395,7 @@ window.__ModuleLoader__.load({
             {
               name: 'shell.overlay',
               id: 'gloss-overlay',
+              inject: () => ({ getCwd }),
             },
             GlossOverlay,
           ),
@@ -1160,6 +1409,18 @@ window.__ModuleLoader__.load({
               order: 3,
             },
             GlossDock,
+          ),
+        )
+
+        // 文件预览（md / 代码 / 纯文本）的路径来源：该槽位的 owner prop 是 absolutePath。
+        // 槽位在旧版 DSH 不存在时 inject 会一直等待，不影响其它功能。
+        ctx.slots.inject('sidebar.right.tab.document.actions', () =>
+          ctx.slots.register(
+            {
+              name: 'sidebar.right.tab.document.actions',
+              id: 'gloss-file-path',
+            },
+            GlossFileMarker,
           ),
         )
       },

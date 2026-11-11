@@ -20,8 +20,9 @@ assert.ok(start >= 0 && end > start, 'client.js 里找不到纯函数区标记')
 const body = source.slice(start, end)
 const api = new Function(
   body +
-    '\nreturn { BEGIN, END, MAX_QUOTE, MAX_NOTES, TYPE_LABEL, truncate, normalizeQuote, normalizeNote,' +
-    ' formatBlock, parseBlock, mergeBlock, mergeNotes, sortNotes, blockSignature, stripRuntimeNote, cutBlock };',
+    '\nreturn { BEGIN, END, MAX_QUOTE, MAX_NOTES, MAX_HEADING, TYPE_LABEL, truncate, basenameOf, toWorkspacePath,' +
+    ' normalizeHeading, normalizeQuote, normalizeNote, locationLabelOf, formatBlock, parseBlock, mergeBlock,' +
+    ' mergeNotes, sortNotes, blockSignature, stripRuntimeNote, cutBlock };',
 )()
 
 const { BEGIN, END, MAX_QUOTE, MAX_NOTES } = api
@@ -204,7 +205,17 @@ test('块签名随内容变化', () => {
 
 test('stripRuntimeNote 丢弃运行时字段', () => {
   const stripped = api.stripRuntimeNote({ id: 'p0', turn: 2, quote: 'q', note: 'n', type: 'idea', createdAt: 1, offset: 3 })
-  assert.deepEqual(Object.keys(stripped).sort(), ['createdAt', 'kindLabel', 'note', 'offset', 'quote', 'turn', 'type'])
+  assert.deepEqual(Object.keys(stripped).sort(), [
+    'createdAt',
+    'file',
+    'heading',
+    'kindLabel',
+    'note',
+    'offset',
+    'quote',
+    'turn',
+    'type',
+  ])
   assert.equal(stripped.id, undefined)
 })
 
@@ -231,10 +242,116 @@ test('模拟完整批注流程：反复批注 → 草稿块 → 重新解析 →
   assert.equal(api.mergeBlock(draft, []), '我自己的前言')
 })
 
+test('文件批注：位置带路径与章节，roundtrip 保留', () => {
+  const input = [
+    {
+      turn: null,
+      kindLabel: '',
+      heading: '已知限制',
+      file: { path: '调研/2026-10-15-AI证书调研.md', label: '2026-10-15-AI证书调研.md' },
+      quote: '厂商口径称补贴率为 12%',
+      note: '这里的数字是官方口径还是第三方转述？',
+      type: 'question',
+      createdAt: 2,
+    },
+    {
+      turn: 2,
+      kindLabel: '回答',
+      quote: '第二轮的引用',
+      note: '聊天里的一条',
+      type: 'idea',
+      createdAt: 1,
+    },
+  ]
+  const block = api.formatBlock(input)
+  assert.ok(block.includes('位置：文件 调研/2026-10-15-AI证书调研.md'))
+  assert.ok(block.includes('章节：已知限制'))
+  const parsed = api.parseBlock(block)
+  assert.equal(parsed.ok, true)
+  assert.equal(parsed.notes.length, 2)
+  // 聊天批注（有轮次）排在文件批注（turn=null）之前
+  assert.equal(parsed.notes[0].turn, 2)
+  assert.equal(parsed.notes[0].file, null)
+  assert.equal(parsed.notes[1].turn, null)
+  assert.deepEqual(parsed.notes[1].file, {
+    path: '调研/2026-10-15-AI证书调研.md',
+    label: '2026-10-15-AI证书调研.md',
+  })
+  assert.equal(parsed.notes[1].heading, '已知限制')
+  assert.equal(parsed.notes[1].quote, '厂商口径称补贴率为 12%')
+})
+
+test('旧格式批注块（只有轮次、无章节）仍能解析', () => {
+  const legacy = [
+    BEGIN,
+    '1) 位置：第2轮回答',
+    '   类型：问题',
+    '   引用：旧引用',
+    '   批注：旧批注',
+    END,
+  ].join('\n')
+  const parsed = api.parseBlock(legacy)
+  assert.equal(parsed.ok, true)
+  assert.equal(parsed.notes[0].turn, 2)
+  assert.equal(parsed.notes[0].file, null)
+  assert.equal(parsed.notes[0].heading, '')
+})
+
+test('文件位置：路径未知时降级为「文件（路径未知）」', () => {
+  const block = api.formatBlock([
+    {
+      turn: null,
+      kindLabel: '',
+      file: { path: '', label: '文件预览' },
+      quote: 'q',
+      note: 'n',
+      type: 'question',
+      createdAt: 1,
+    },
+  ])
+  assert.ok(block.includes('位置：文件（路径未知）'))
+  const parsed = api.parseBlock(block)
+  assert.equal(parsed.ok, true)
+  assert.equal(parsed.notes[0].file, null)
+})
+
+test('toWorkspacePath：工作区内转相对路径，区外原样返回', () => {
+  assert.equal(api.toWorkspacePath('/ws/调研/a.md', '/ws'), '调研/a.md')
+  assert.equal(api.toWorkspacePath('/ws', '/ws/'), '.')
+  assert.equal(api.toWorkspacePath('/other/a.md', '/ws'), '/other/a.md')
+  assert.equal(api.toWorkspacePath('/ws2/a.md', '/ws'), '/ws2/a.md')
+  assert.equal(api.toWorkspacePath('', '/ws'), '')
+})
+
+test('basenameOf / normalizeHeading', () => {
+  assert.equal(api.basenameOf('/ws/调研/a.md'), 'a.md')
+  assert.equal(api.basenameOf('a.md'), 'a.md')
+  assert.equal(api.basenameOf('/ws/调研/'), '调研')
+  assert.equal(api.normalizeHeading('  已知   限制 '), '已知 限制')
+  assert.equal(api.normalizeHeading(null), '')
+})
+
+test('blockSignature 区分文件路径与章节', () => {
+  const base = {
+    turn: null,
+    type: 'question',
+    quote: 'q',
+    note: 'n',
+    heading: 'A',
+    file: { path: 'a.md', label: 'a.md' },
+  }
+  const other = { ...base, file: { path: 'b.md', label: 'b.md' } }
+  const heading = { ...base, heading: 'B' }
+  assert.notEqual(api.blockSignature([base]), api.blockSignature([other]))
+  assert.notEqual(api.blockSignature([base]), api.blockSignature([heading]))
+  assert.equal(api.blockSignature([base]), api.blockSignature([base]))
+})
+
 test('已知上限常量', () => {
   assert.equal(MAX_QUOTE, 800)
   assert.equal(MAX_NOTES, 20)
   assert.equal(api.MAX_NOTES, MAX_NOTES)
+  assert.equal(api.MAX_HEADING, 60)
 })
 
 console.log('\n' + passed + ' 项通过')

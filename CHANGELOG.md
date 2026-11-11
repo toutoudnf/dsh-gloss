@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 — 2026-11-11
+
+- 新增：**右栏文件预览批注**。在 DSH 文档预览（Markdown / 代码 / 纯文本）里选中文字即可加批注，
+  位置自动带上「文件 + 章节」。
+- 文件路径来源：注册 DSH 文档预览的 `sidebar.right.tab.document.actions` 槽位，渲染隐藏标记暴露
+  owner prop `absolutePath`，再用会话 cwd 转成工作区相对路径。**不接管 Markdown 渲染**。
+- 批注块格式向后兼容扩展：`位置：文件 <相对路径>` + 可选 `章节：<标题>`；旧格式块照常解析。
+- 托盘：文件批注显示文件名（悬停看完整路径），点 ↗ 滚回预览里的原文。
+- `inject` 增加 `sessions` 服务（查会话 cwd）；新增 DOM 依赖 `data-textpreview-body` /
+  `data-document-markdown` / `data-sidebar-right-session`，失效时只降级文件批注。
+- 离线验证：24 项纯函数单测 + 7 项冒烟测试通过；真实页面手测待做。
+
 ## 0.1.0 — 2026-11-11
 
 - 首个独立仓库版本。

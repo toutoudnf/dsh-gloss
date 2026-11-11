@@ -2,7 +2,7 @@
  * 冒烟测试：不依赖 DSH / 浏览器 / 真实 React，用极简 React 替身跑通
  *   1) client.js 能否被 ModuleLoader 形式加载；
  *   2) factory 能否返回带 apply 的插件；
- *   3) apply 是否注册了预期的两个 slot；
+ *   3) apply 是否注册了预期的三个 slot；
  *   4) 两个组件能否在给定 props 下完成一次渲染（无异常、有预期文案）。
  *
  * 注意：这**不能**替代真实页面验证（真实 React/Lexical/DOM 行为仍需刷新页面后手测），
@@ -120,11 +120,18 @@ const plugin = loaded.factory((name) => {
   return fake.React
 })
 assert.ok(plugin && typeof plugin.apply === 'function', 'factory 没有返回插件对象')
-assert.deepEqual(plugin.inject, ['slots'])
+assert.deepEqual(plugin.inject, ['sessions', 'slots'])
 
 // ---------- apply：捕获 slot 注册 ----------
 const registrations = []
 const fakeCtx = {
+  sessions: {
+    list: {
+      getSnapshot() {
+        return { byId: {} }
+      },
+    },
+  },
   effect(callback) {
     const cleanup = callback()
     assert.equal(typeof cleanup, 'function', '样式 effect 应返回清理函数')
@@ -143,12 +150,18 @@ const fakeCtx = {
 plugin.apply(fakeCtx)
 
 const bySlot = new Map(registrations.map((entry) => [entry.options.name, entry]))
-assert.equal(registrations.length, 2)
+assert.equal(registrations.length, 3)
 assert.ok(bySlot.has('shell.overlay'), '缺少 shell.overlay 注册')
 assert.ok(bySlot.has('conversation.composer.dock'), '缺少 composer.dock 注册')
+assert.ok(
+  bySlot.has('sidebar.right.tab.document.actions'),
+  '缺少文件预览路径槽位注册（sidebar.right.tab.document.actions）',
+)
 assert.equal(bySlot.get('conversation.composer.dock').options.id, 'gloss-dock')
+assert.equal(bySlot.get('sidebar.right.tab.document.actions').options.id, 'gloss-file-path')
 assert.equal(typeof bySlot.get('shell.overlay').Component, 'function')
 assert.equal(typeof bySlot.get('conversation.composer.dock').Component, 'function')
+assert.equal(typeof bySlot.get('sidebar.right.tab.document.actions').Component, 'function')
 
 // 样式已挂到 document.head
 assert.equal(appended.length, 1)
@@ -159,6 +172,14 @@ assert.match(styleTag.textContent, /\.rnx-dock/, '样式应包含托盘类名')
 // ---------- 渲染 overlay：无选区时应渲染为 null ----------
 const Overlay = bySlot.get('shell.overlay').Component
 assert.equal(fake.render(Overlay, {}), null)
+
+// ---------- 渲染文件预览路径标记：有路径才有隐藏标记 ----------
+const Marker = bySlot.get('sidebar.right.tab.document.actions').Component
+const markerTree = fake.render(Marker, { absolutePath: '/ws/调研/a.md' })
+assert.equal(markerTree.props['data-gloss-file-path'], '/ws/调研/a.md')
+assert.equal(markerTree.props.style.display, 'none', '路径标记不应显示 UI')
+assert.equal(fake.render(Marker, {}), null)
+assert.equal(fake.render(Marker, undefined), null)
 
 // ---------- 渲染 dock：带批注块时应渲染出计数 ----------
 const BEGIN = '====== 批注（DSH 自动收集，请按编号逐条回应）======'
@@ -203,9 +224,10 @@ assert.equal(emptyTree, null, '空草稿无备份时托盘不应占位')
 
 console.log('gloss 冒烟测试')
 console.log('  ✓ ModuleLoader 载入 + factory 返回插件')
-console.log('  ✓ apply 注册 shell.overlay / composer.dock')
+console.log('  ✓ apply 注册 shell.overlay / composer.dock / document.actions')
 console.log('  ✓ 样式 effect 使用主题 token 并返回清理函数')
 console.log('  ✓ overlay 无选区渲染 null')
+console.log('  ✓ 文件预览路径标记只在有 absolutePath 时渲染隐藏标记')
 console.log('  ✓ dock 能从草稿解析出 2 条批注并渲染计数')
 console.log('  ✓ dock 空草稿不渲染')
-console.log('\n6 项通过（真实页面行为仍需安装后手测）')
+console.log('\n7 项通过（真实页面行为仍需安装后手测）')
